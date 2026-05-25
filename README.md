@@ -28,9 +28,9 @@ gfortran -o hello hello.f90      # 编译成功
 
 ## Requirements
 
-- OHOS Clang 15.0.4+ (`aarch64-unknown-linux-ohos-clang`, via SDK 26)
+- OHOS Clang 15.0.4+ (`aarch64-unknown-linux-ohos-clang`, via SDK 26, can `brew install ohos-sdk`)
 - GCC 14.2.0 source (downloaded by `download.sh`)
-- GMP, MPFR, MPC (downloaded by `download.sh`)
+- GMP, MPFR, MPC (downloaded by `download.sh`, or use brew: `brew install gmp mpfr mpc`)
 - GNU Bash as `CONFIG_SHELL`
 - `ohos-compat.h` — compatibility header for Clang's `__availability__` attribute
 

@@ -17,6 +17,7 @@ if [ ! -d "gcc-${GCC_VERSION}" ]; then
 fi
 
 echo "Downloading prerequisites (GMP, MPFR, MPC)..."
+echo "  (Alternatively: brew install gmp mpfr mpc)"
 cd "gcc-${GCC_VERSION}"
 ./contrib/download_prerequisites
 cd ..
