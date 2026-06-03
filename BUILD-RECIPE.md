@@ -1,155 +1,129 @@
-# gfortran-harmonyos 完整构建与使用指南
+# gfortran‑harmonyos – Complete Build & Usage Guide
 
-## 一、概述
+## 1. Overview
 
-将 GCC 14.2.0 的 gfortran (Fortran 编译器) 移植到 HarmonyOS (OpenHarmony) 平台，使用系统自带的 OHOS Clang 15.0.4 作为宿主编译器。目标平台 `aarch64-unknown-linux-ohos`，静态链接 libgfortran，通过 LD_PRELOAD + destructor 模式执行。
+Port GCC 14.2.0’s `gfortran` (Fortran compiler) to HarmonyOS (OpenHarmony) using the system’s native OHOS Clang 15.0.4 as the host compiler.  
+Target platform: `aarch64-unknown-linux-ohos`.  
+Key features: static linking of `libgfortran`, execution via `LD_PRELOAD` + destructor pattern.
 
-## 二、前置条件
+## 2. Prerequisites
 
-### 2.1 安装 OHOS SDK (hnp 包管理器)
+### 2.1 OHOS SDK (hnp package manager)
 
-SDK 通过 hnp 包管理器安装。当前系统版本：
-
-```
+SDK installed via `hnp`. Current version:
 ohos-sdk_26.0.0.18 (API 26)
-```
 
-SDK 安装路径：
-
-```
+SDK installation path:
 /data/service/hnp/ohos-sdk.org/ohos-sdk_26.0.0.18/ohos/native/
-  ├── llvm/bin/           # Clang 工具链
-  │   ├── clang           # (但不可直接使用，见注)
-  │   └── ...
-  ├── sysroot/            # musl 头文件和库
-  │   ├── usr/include/
-  │   └── usr/lib/
-  └── build-tools/        # cmake, ninja 等
-```
+├── llvm/bin/ # Clang toolchain
+│ ├── clang
+│ └── ...
+├── sysroot/ # musl headers & libraries
+│ ├── usr/include/
+│ └── usr/lib/
+└── build-tools/ # cmake, ninja, etc.
 
-hnp 安装命令（参考，本环境已有）：
+> **Note:** In this environment `hnp` commands are not directly callable – the SDK is pre‑installed.
 
-```bash
-# hnp install ohos-sdk          # 安装最新版
-# hnp install ohos-sdk_26.0.0.18 # 安装指定版本
-```
+### 2.2 Clang toolchain entry points
 
-注：hnp 命令在本环境不可直接调用，SDK 由系统预装。
+The SDK provides stable symlinks under `/data/service/hnp/bin/`:
 
-### 2.2 Clang 工具链入口
-
-SDK 在 `/data/service/hnp/bin/` 下提供 symlink 作为稳定入口：
 
 ```bash
 ls /data/service/hnp/bin/aarch64-unknown-linux-ohos-clang*
-# aarch64-unknown-linux-ohos-clang     → ../ohos-sdk.org/ohos-sdk_26.0.0.18/ohos/native/llvm/bin/clang
-# aarch64-unknown-linux-ohos-clang++   → ../ohos-sdk.org/ohos-sdk_26.0.0.18/ohos/native/llvm/bin/clang++
-```
+# aarch64-unknown-linux-ohos-clang   → ../ohos-sdk.org/.../llvm/bin/clang
+# aarch64-unknown-linux-ohos-clang++ → .../clang++
 
-这些是 shell 包装脚本，内部定位 SDK 和 sysroot。构建 GCC 时，必须使用这些包装器而非直接调用 `clang`。
+```
+These are shell wrappers that locate the SDK and sysroot. Always use these wrappers when building GCC.
 
 ```bash
 export OHOS_CLANG=/data/service/hnp/bin/aarch64-unknown-linux-ohos-clang
 export OHOS_CLANGXX=/data/service/hnp/bin/aarch64-unknown-linux-ohos-clang++
-```
 
-验证编译器：
+```
+Verify:
 
 ```bash
 $OHOS_CLANG --version
-# clang version 15.0.4 (/srv/workspace/llvm-release/2026_0313_llvm15_release/...)
+# clang version 15.0.4 (...)
 # Target: aarch64-unknown-linux-ohos
 # Thread model: posix
 ```
-
-### 2.3 Sysroot
-
-```
+2.3 Sysroot
 SYSROOT=/data/service/hnp/ohos-sdk.org/ohos-sdk_26.0.0.18/ohos/native/sysroot
-```
 
-### 2.4 其他依赖
+2.4 Other dependencies
 
-- **Bash**: `/data/service/hnp/bin/bash`（必须配置为 CONFIG_SHELL，因为 GCC 的 configure 依赖 bash 特性）
-- **TMPDIR**: 必须设置在可写文件系统（hmdfs 上 mkdir 有 group x 问题，`umask 022` 解决）
+Bash: /data/service/hnp/bin/bash – must be set as CONFIG_SHELL (GCC’s configure needs bash features)
 
-## 三、构建 GCC 编译器
+TMPDIR: must point to a writable filesystem (hmdfs has group‑x issues – use umask 022)
 
-### 3.1 下载源码
-
+3. Building GCC
+3.1 Download sources
 ```bash
-git clone <仓库> gfortran-harmonyos
+git clone <repo> gfortran-harmonyos
 cd gfortran-harmonyos
 ./download.sh
 ```
+download.sh:
 
-`download.sh` 执行：
+    downloads gcc-14.2.0.tar.xz from GNU mirror
 
-1. 从 `https://ftpmirror.gnu.org/gcc/gcc-14.2.0/gcc-14.2.0.tar.xz` 下载 GCC
-2. 解压到 `gcc-14.2.0/`
-3. 运行 `gcc-14.2.0/contrib/download_prerequisites` 下载 GMP、MPFR、MPC
+    unpacks to gcc-14.2.0/
 
-目录结果：
+    runs contrib/download_prerequisites (GMP, MPFR, MPC)
 
-```
+Directory structure:
 gfortran-harmonyos/
-  ├── gcc-14.2.0/              # GCC 源码
+  ├── gcc-14.2.0/
   ├── download.sh
   ├── configure.sh
   ├── build.sh
-  └── build/                   # 构建输出
-```
+  └── build/              # build output
 
-### 3.2 关键补丁文件
+  3.2 Required patch files
+3.2.1 ohos-compat.h
 
-在构建前，需要准备以下文件：
-
-#### 3.2.1 ohos-compat.h
-
-路径：`build/ohos-compat.h`（构建时通过 `-include ohos-compat.h` 全局引入）
-
-内容：
+Path: build/ohos-compat.h (globally included via -include ohos-compat.h)
 
 ```c
 /* GCC compatibility: ignore Clang's __availability__ attribute */
 #define __availability__(...)
 ```
 
-用途：OHOS sysroot 头文件中使用了 Clang 的 `__attribute__((__availability__))`，当 GCC 内部的 xgcc 编译这些头文件时会报错。此宏将其清零。
+Purpose: OHOS sysroot headers use Clang’s __attribute__((__availability__)). This macro disables it for GCC’s xgcc.
 
-注意：这个头文件也复制到了 `build/gcc/include-fixed/ohos-compat.h` 和 `test/ohos-compat.h`。libgfortran 编译时通过 `CPPFLAGS="-include ohos-compat.h"` 引入。
+Also copied to build/gcc/include-fixed/ohos-compat.h and test/ohos-compat.h. Used during libgfortran build via CPPFLAGS="-include ohos-compat.h".
+3.2.2 xgcc-wrap.sh (optional, for EINTR retry)
 
-#### 3.2.2 xgcc-wrap.sh（可选，用于 EINTR 重试）
-
-路径：任意位置（如 `~/.local/bin/xgcc-wrap.sh`）
+Place anywhere (e.g. ~/.local/bin/xgcc-wrap.sh):
 
 ```bash
 #!/bin/sh
 # Retry wrapper for xgcc to handle EINTR on HarmonyOS
-# Usage: xgcc-wrap.sh <xgcc-path> [args...]
 if [ $# -lt 1 ]; then exit 1; fi
 XGCC="$1"; shift
 for attempt in $(seq 1 30); do
     "$XGCC" "$@"; rc=$?
     [ $rc -eq 0 ] && exit 0
-    # EINTR on HarmonyOS returns exit code 1 or 127
     if [ $rc -eq 127 ] || [ $rc -eq 1 ]; then
         usleep 100000; continue
     fi
     exit $rc
 done
 exec "$XGCC" "$@"
+
 ```
-
-用途：HarmonyOS 内核在某些系统调用上会返回 EINTR（主要通过 exit code 127 体现），导致 xgcc 编译随机失败。此包装器自动重试 Transient 错误。
-
-### 3.3 配置
+3.3 Configuration
 
 ```bash
 ./configure.sh
-```
 
-`configure.sh` 执行内容：
+```
+Contents of configure.sh:
+
 
 ```bash
 #!/bin/sh
@@ -191,29 +165,25 @@ OHOS_CLANGXX=/data/service/hnp/bin/aarch64-unknown-linux-ohos-clang++
     CXXCPP="${OHOS_CLANGXX} -E" \
     CFLAGS="-O2 -g0" \
     CXXFLAGS="-O2 -g0"
+
+
 ```
+Key configuration options:
+Parameter	              Description
+--host=--build=--target	All three equal → native build (not cross‑compilation)
+--disable-bootstrap	Single‑stage build; GCC does not bootstrap (host compiler is Clang)
+--disable-gomp	Disable OpenMP (libgomp is complex and not needed)
+--disable-libquadmath	Disable quad‑precision math library (requires extra libs)
+--with-sysroot=/	Set sysroot to /; Clang finds SDK via built‑in search path
+--without-isl --disable-graphite	Disable Graphite loop optimisation (depends on isl)
 
-**关键配置说明：**
 
-
-| 参数                               | 说明                                                     |
-| ---------------------------------- | -------------------------------------------------------- |
-| `--host=--build=--target`          | 三者相同 = native 构建（非交叉编译）                     |
-| `--disable-bootstrap`              | 单阶段构建，GCC 不自举。因为宿主编译器是 Clang，不是 GCC |
-| `--disable-gomp`                   | 禁用 OpenMP（libgomp 编译复杂且不需要）                  |
-| `--disable-libquadmath`            | 禁用四精度数学库（libquadmath 需要附加库）               |
-| `--with-sysroot=/`                 | sysroot 设为根目录，Clang 通过内置搜索路径找到 SDK       |
-| `--without-isl --disable-graphite` | 禁用 Graphite 循环优化框架（依赖 isl 库）                |
-
-### 3.4 编译
-
+3.4 Compilation
 ```bash
 cd /storage/Users/currentUser/gfortran-harmonyos/build
 ./../build.sh
 ```
-
-`build.sh` 简化为：
-
+build.sh:
 ```bash
 #!/bin/sh
 export TMPDIR=/storage/Users/currentUser/gfortran-harmonyos/tmp
@@ -223,164 +193,100 @@ umask 022
 cd /storage/Users/currentUser/gfortran-harmonyos/build
 make -j$(nproc)
 ```
+Known build issues & workarounds
 
-#### 已知构建问题及解决方法
+1. LLD alignment error (thin archives)
 
-**问题 1：LLD 链接对齐错误**
+ld.lld: error: libcommon.a(diagnostic-format-sarif.o): improper alignment for relocation R_AARCH64_LDST64_ABS_LO12_NC
 
-```
-ld.lld: error: libcommon.a(diagnostic-format-sarif.o):(function ...):
-  improper alignment for relocation R_AARCH64_LDST64_ABS_LO12_NC: 0x2D2EA4 is not aligned to 8 bytes
-```
+    Occurs when linking libbackend.a (GCC itself).
 
-原因：GCC 的 `ar` 打包时使用了 `rcT`（`T` = thin archive），但 LLD 对 thin archive 中的对齐处理与 BFD ld 不同。此问题出现在链接 `libbackend.a`（GCC 本身）阶段，与最终 gfortran 链接无关。
+    Workaround: use make -k to continue, or a retry script (make-retry.sh).
 
-解决方法：**这些链接错误仅影响 GCC 自身的构建**（xgcc、cc1 等），不影响 Fortran 运行时库。但实际上 `make` 会在此失败。需要：
+    The final gfortran and libgfortran are still correctly built.
 
-- 使用 `make -k` 跳过错误的目标继续编译
-- 或者通过 retry-make 脚本多次重试，某些目标在重试中成功
-- 最终 gfortran 驱动可正常安装，因为 `gcc` 二进制自身不会用于实际编译 Fortran（gfortran 使用 f951 作为编译后端）
+2. xgcc EINTR
+HarmonyOS kernel may return EINTR (exit code 127). Wrapping xgcc with xgcc-wrap.sh or simply retrying make works.
 
-本环境中通过多次重试（使用 `make-retry.sh`）解决：
+3. Missing .lo files after interrupted build
+Use fix-build.sh to regenerate stub .lo files from existing .libs/*.o.
 
-```bash
-./build/make-retry.sh -j4
-```
-
-（重试最多 10 次，每次 `make` 遇到 transcient 错误重跑）
-
-**问题 2：xgcc EINTR**
-
-HarmonyOS 内核返回 EINTR 导致 xgcc 编译随机退出码 127。通过在 Makefile 中包装 CC 命令为 xgcc-wrap.sh 解决，或直接多次重试 make。
-
-**问题 3：libtool .lo 文件缺失**
-
-编译中断后重启 make 时，libtool 因为缺少 `.lo` 文件（但 `.libs/*.o` 已存在）报错。使用 `fix-build.sh` 重建 .lo stub：
-
-```bash
-./build/fix-build.sh
-```
-
-该脚本为所有已有 `.libs/*.o` 但缺失 `.lo` 的目标自动生成 stub 文件。
-
-### 3.5 安装
-
-```bash
+3.5 Installation
 cd /storage/Users/currentUser/gfortran-harmonyos/build
 make install prefix=/storage/Users/currentUser/.local/gfortran
-```
+Note: Override prefix because libtool hard‑coded the absolute path during configure.
 
-注：必须覆盖 `prefix`，因为 libtool 在 configure 时硬编码了安装路径为 `PREFIX`（`~/.local/gfortran`），但 hmdfs 上的绝对路径不同。如果 install 时报 "permission denied"，检查目标目录权限。
 
-### 3.6 CRT 文件配置（使 gfortran 能编译独立可执行文件）
-
-安装后，gfortran 可直接编译 Fortran 代码为 `.o` 目标文件。但如果要用 `gfortran -o hello hello.f90` 编译独立可执行文件，还需要复制 OHOS SDK 的 CRT（C Runtime）启动文件到 gfortran 的库目录。
-
-**原因：**
-- gfortran 的 `STARTFILE_SPEC` 期望 `Scrt1.o`、`crti.o`、`crtbegin.o`、`crtend.o`、`crtn.o` 在库搜索路径中
-- 这些文件位于 OHOS SDK 的不同位置（sysroot 和 Clang 的 compiler-rt），gfortran 默认找不到
-- `crtbegin.o` 在 Clang 中名为 `clang_rt.crtbegin.o`，需要重命名
-
+3.6 CRT files (to enable standalone executable compilation)
+After installation, gfortran can compile Fortran to .o files. To also produce standalone executables (gfortran -o hello hello.f90), copy required CRT startup files from the OHOS SDK.
 ```bash
 GFORTRAN_LIB=/storage/Users/currentUser/.local/gfortran/lib/gcc/aarch64-unknown-linux-ohos/14.2.0
 SYSROOT=/data/service/hnp/ohos-sdk.org/ohos-sdk_26.0.0.18/ohos/native/sysroot
 CLANGRT=/data/service/hnp/ohos-sdk.org/ohos-sdk_26.0.0.18/ohos/native/llvm/lib/clang/15.0.4/lib/aarch64-linux-ohos
 
-# musl CRT 启动文件
+# musl CRT entry files
 cp "$SYSROOT/usr/lib/aarch64-linux-ohos/Scrt1.o" "$GFORTRAN_LIB/"
 cp "$SYSROOT/usr/lib/aarch64-linux-ohos/crti.o"  "$GFORTRAN_LIB/"
 cp "$SYSROOT/usr/lib/aarch64-linux-ohos/crtn.o"  "$GFORTRAN_LIB/"
 
-# Clang compiler-rt CRT（需重命名为 GCC 期望的名称）
+# Clang compiler‑rt CRT (rename to GCC expected names)
 cp "$CLANGRT/clang_rt.crtbegin.o" "$GFORTRAN_LIB/crtbegin.o"
 cp "$CLANGRT/clang_rt.crtend.o"   "$GFORTRAN_LIB/crtend.o"
 ```
-
-配置完成后，编译独立可执行文件：
+Now you can compile executables:
 ```bash
 gfortran -o hello hello.f90 --sysroot="$SYSROOT"
 ```
 
-注意：生成的 ELF 在 HarmonyOS 上仍因 hmmac 安全策略**无法直接执行**（参见 6.1 节），需通过 LD_PRELOAD + destructor 模式运行。
+But: The generated ELF cannot be executed directly on HarmonyOS due to hmmac security policies (see Section 6). Use the LD_PRELOAD + destructor method.
 
-### 3.7 libbacktrace 独立构建（用于运行时）
+3.7 libbacktrace standalone build (for runtime)
 
-libgfortran 构建时已经自行编译了 libbacktrace（在 `build/libbacktrace/` 下），但输出的 `.a` 需要单独编译以确保 PIC 版本可用。
+libbacktrace is built automatically as part of GCC and is located at:
+build/aarch64-unknown-linux-ohos/libbacktrace/.libs/libbacktrace.a
 
-libbacktrace 在 GCC 构建过程中作为子项目自动配置和编译，位于：
+No manual rebuild is needed – the final linking step will reference this .a.
 
-```
-build/aarch64-unknown-linux-ohos/libbacktrace/
-```
+4. Installed components
 
-**不需要手动构建 libbacktrace** — 构建日志显示 libgfortran 链接时已自动链接了 `build/libbacktrace/libbacktrace.la`。最终链接只需要从该目录获取 `libbacktrace.a`：
+Installation prefix: ~/.local/gfortran/
 
+
+File	Purpose
+bin/gfortran	gfortran driver (ELF, 22KB)
+bin/aarch64-unknown-linux-ohos-gfortran	target‑specific symlink
+lib/gcc/aarch64-unknown-linux-ohos/14.2.0/f951	Fortran compiler backend (72MB)
+lib/gcc/aarch64-unknown-linux-ohos/14.2.0/libgcc.a	GCC runtime static library
+lib/gcc/aarch64-unknown-linux-ohos/14.2.0/libgcc_s.so.1	GCC runtime dynamic library
+lib/gcc/aarch64-unknown-linux-ohos/14.2.0/specs	gfortran specs file
+lib64/libgfortran.a	Fortran runtime static library (788 objects)
+lib64/libgfortran.so.5.0.0	Fortran runtime dynamic library
+lib64/libgfortran.so.5 → libgfortran.so.5.0.0	SO symlink
+lib64/libgfortran.so → libgfortran.so.5	SO symlink
+
+
+5. Environment configuration
+5.1 Shell environment
+   
 ```bash
-ls build/libbacktrace/.libs/libbacktrace.a
-```
-
-该 `.a` 包含以下对象：`atomic`, `backtrace`, `dwarf`, `elf`, `fileline`, `mmap`, `mmapio`, `posix`, `print`, `simple`, `sort`, `state`。
-
-**如果重新构建 libbacktrace（可选）：**
-
-```bash
-cd build/libbacktrace
-./configure --host=aarch64-unknown-linux-ohos \
-    CC=/data/service/hnp/bin/aarch64-unknown-linux-ohos-clang \
-    --prefix=/storage/Users/currentUser/.local/gfortran
-make -j$(nproc)
-```
-
-本环境中不需要重新构建，直接使用 GCC 构建流程产生的版本即可。
-
-## 四、已安装的组件
-
-安装路径：`~/.local/gfortran/`
-
-
-| 文件                                                      | 作用                                   |
-| --------------------------------------------------------- | -------------------------------------- |
-| `bin/gfortran`                                            | gfortran 驱动（ELF，22KB）             |
-| `bin/aarch64-unknown-linux-ohos-gfortran`                 | target-specific symlink                |
-| `lib/gcc/aarch64-unknown-linux-ohos/14.2.0/f951`          | Fortran 编译器后端（72MB）             |
-| `lib/gcc/aarch64-unknown-linux-ohos/14.2.0/libgcc.a`      | GCC 运行时静态库                       |
-| `lib/gcc/aarch64-unknown-linux-ohos/14.2.0/libgcc_s.so.1` | GCC 运行时动态库                       |
-| `lib/gcc/aarch64-unknown-linux-ohos/14.2.0/specs`         | gfortran 规格文件                      |
-| `lib64/libgfortran.a`                                     | Fortran 运行时静态库（788 个目标文件） |
-| `lib64/libgfortran.so.5.0.0`                              | Fortran 运行时动态库                   |
-| `lib64/libgfortran.so.5` → `libgfortran.so.5.0.0`        | so symlink                             |
-| `lib64/libgfortran.so` → `libgfortran.so.5`              | so symlink                             |
-
-## 五、环境配置
-
-### 5.1 Shell 环境
-
-```bash
-# 添加到 ~/.zshenv 或 setup-env.sh
+# Add to ~/.zshenv or setup-env.sh
 export PATH="$PATH:$HOME/.local/gfortran/bin"
 export LD_LIBRARY_PATH="$HOME/.local/gfortran/lib64:$LD_LIBRARY_PATH"
 ```
-
-### 5.2 gfortran 包装器
-
-`~/.local/bin/gfortran`（Shell 脚本，确保 LD_LIBRARY_PATH 正确传递）：
-
+5.2 gfortran wrapper
 ```bash
+~/.local/bin/gfortran:
 #!/bin/sh
 export LD_LIBRARY_PATH="/storage/Users/currentUser/.local/gfortran/lib64:$LD_LIBRARY_PATH"
 exec /storage/Users/currentUser/.local/gfortran/bin/gfortran "$@"
 ```
-
-### 5.3 验证安装
-
+5.3 Verification
 ```bash
 source ~/.zshenv
 gfortran --version
 # GNU Fortran (GCC) 14.2.0
 ```
-
-编译测试：
-
+Compile a test object:
 ```bash
 cat > /tmp/test.f90 << 'EOF'
 program hello
@@ -388,67 +294,51 @@ program hello
 end program hello
 EOF
 gfortran -c -fPIC -o /tmp/test.o /tmp/test.f90
-# 检查是否生成 .o 文件
 ```
+6. Runtime architecture
+6.1 The problem: HarmonyOS blocks user‑compiled ELFs
 
-## 六、运行时架构
-
-### 6.1 问题：HarmonyOS 阻止执行用户编译的 ELF
-
-HarmonyOS 的 `hmmac`（HarmonyOS Mandatory Access Control）安全策略在所有用户可写文件系统设置 `hmmac=use_task`，阻止执行用户创建的可执行文件：
-
+HarmonyOS hmmac (mandatory access control) sets hmmac=use_task on all user‑writable filesystems, preventing execution of user‑created executables.
 ```bash
-# mount 输出显示：
-tmpfs on /storage/Users type tmpfs (rw,...,hmmac=use_task,...)
-tmpfs on /data/storage/el2 type tmpfs (rw,...,hmmac=use_task,...)
-# 执行返回 126 (Permission denied)
+# mount output shows:
+tmpfs on /storage/Users type tmpfs (...,hmmac=use_task,...)
+# execve returns 126 (Permission denied)
 ```
+All workarounds fail:
 
-即使用户 `chmod +x`，`execve` 拒绝执行。以下方案均失败：
+    execve directly → ❌
 
-- `execve` 直接执行 → ❌
-- `execveat(fd, AT_EMPTY_PATH)` → ❌
-- `memfd_create` + `execveat` → ❌
-- 系统二进制（如 `/bin/true`）拒绝 `LD_PRELOAD` → ❌
+    execveat(fd, AT_EMPTY_PATH) → ❌
 
-### 6.2 解决方案：LD_PRELOAD + destructor 模式
+    memfd_create + execveat → ❌
 
-```
-用户源代码 → gfortran -c -fPIC → .o
-                                   → clang -shared -nostartfiles → .so → LD_PRELOAD → host 进程
-                 C 存根 (destructor) ─┘                                   destructor 阶段执行 Fortran
-```
+    System binaries refuse LD_PRELOAD → ❌
 
-### 6.3 编译 host 桥接程序
+6.2 Solution: LD_PRELOAD + destructor pattern
 
-`/data/storage/el2/base/host.c`:
+User source → gfortran -c -fPIC → .o
+                                   → clang -shared -nostartfiles → .so → LD_PRELOAD → host process
+                 C stub (destructor) ─┘                                   destructor executes Fortran
 
+6.3 Compile the host bridge program
+/data/storage/el2/base/host.c:
 ```c
 int main(void) { return 0; }
 ```
-
-编译命令：
-
+Compile as PIE (required by OHOS):
 ```bash
-# host 必须编译为 PIE/PIC 可执行文件（OHOS 要求）
 aarch64-unknown-linux-ohos-clang \
     -o /data/storage/el2/base/host \
     /data/storage/el2/base/host.c
 ```
-
-验证：
-
+Verify:
 ```bash
 file /data/storage/el2/base/host
-# ELF shared object, 64-bit LSB arm64, dynamic (/lib/ld-musl-aarch64.so.1), not stripped
+# ELF shared object, 64-bit LSB arm64, dynamic, not stripped
 ```
+6.4 C runtime stub (destructor pattern – final version)
 
-注：host 编译为**动态链接**的 PIE 可执行文件（OHOS 不允许静态链接可执行文件）。编译时无需 `-static` 或 `-nostartfiles`。
-
-### 6.4 C 运行时存根（destructor 模式，最终版本）
-
-`/data/storage/el2/base/.fortran_runner.c`（由 fortran-run 自动生成）：
-
+/data/storage/el2/base/.fortran_runner.c (automatically generated by fortran-run):
 ```c
 #include <stdlib.h>
 #include <stdio.h>
@@ -468,64 +358,41 @@ static void run(void) {
     _gfortrani_flush_all_units();
 }
 ```
+Why destructor, not constructor?
+The constructor runs before main() – at that point the Fortran I/O system is not fully initialised. The destructor runs during process exit, after all runtimes are ready.
 
-**核心原理：**
-
-1. `__attribute__((destructor))` — 函数在进程退出时（exit/return from main）调用
-2. `_gfortrani_init_units()` — 初始化 Fortran I/O 系统（内部符号，`_gfortrani_` 前缀）
-3. `_gfortrani_flush_all_units()` — 刷新所有输出缓冲区
-4. 运行时顺序：`host main()` 空返回 → destructor 执行 → `_gfortrani_init_units()` → Fortran main → `_gfortrani_flush_all_units()` → 进程退出
-
-**为什么用 destructor 而非 constructor？**
-
-GCC 的 constructor 在 `_start` 之后、`main()` 之前执行。此时运行时（特别是 Fortran I/O 系统）尚未完全初始化，直接调用 `_gfortrani_init_units()` 可能失败。destructor 在进程退出阶段执行，此时所有运行时已可用。
-
-**为什么不同时使用 constructor？**
-
-本环境之前尝试过 constructor 模式（`fortran_runner.c`），但早期版本在 constructor 中调用 `main()` 然后 `exit(0)`，这会导致 host 的 crt 流程不完整。Destructor 模式更可靠。
-
-### 6.5 opts[] 参数数组
-
+opts[] parameter array:
 ```c
 int opts[] = { 255, 6, 0, 5, 1 };
 ```
 
-对应 `_gfortran_set_options` 的 5 个选项：
+255 – standard output options (all stdio streams)
 
-1. `255` — 标准输出选项（所有 stdio 流）
-2. `6` — 消息长度
-3. `0` — 是否写错误信息到 stderr
-4. `5` — 信号处理行为
-5. `1` — 是否允许子过程
+6 – message length
 
-## 七、运行流程详解
+5 – signal handling behaviour
 
-### 7.1 编译与链接
+1 – allow sub‑processes
 
-用户运行 `fortran-run hello.f90`:
+7. Detailed execution flow
+7.1 Compilation & linking
 
-**步骤 1：生成 C 运行时存根**
+User runs fortran-run hello.f90:
 
-- fortran-run 脚本自动生成 `/data/storage/el2/base/.fortran_runner.c`
-- 若存根未变，使用缓存的 `.o`
+Step 1 – Generate C runtime stub
+fortran-run creates /data/storage/el2/base/.fortran_runner.c (cached if unchanged).
 
-**步骤 2：编译 C 存根为 PIC 对象**
-
+Step 2 – Compile C stub to PIC object
 ```bash
 aarch64-unknown-linux-ohos-clang -c -fPIC -O2 \
     -o /data/storage/el2/base/.fortran_runner.o \
     /data/storage/el2/base/.fortran_runner.c
 ```
-
-**步骤 3：编译 Fortran 代码为 PIC 对象**
-
+Step 3 – Compile Fortran code to PIC object
 ```bash
-gfortran -c -fPIC --sysroot=/data/.../sysroot \
-    -o hello_pic.o hello.f90
+gfortran -c -fPIC --sysroot="$SYSROOT" -o hello_pic.o hello.f90
 ```
-
-**步骤 4：链接为共享库**
-
+Step 4 – Link as shared library
 ```bash
 aarch64-unknown-linux-ohos-clang -shared -nostartfiles \
     -o hello.so \
@@ -535,44 +402,41 @@ aarch64-unknown-linux-ohos-clang -shared -nostartfiles \
     -Wl,--no-whole-archive \
     libbacktrace.a -lm \
     -Wl,--whole-archive libgcc.a -Wl,--no-whole-archive \
-    --sysroot=...
+    --sysroot="$SYSROOT"
 ```
+Linker parameters explained:
+Parameter	Description
+-shared -nostartfiles	Produce shared library, skip CRT startup files (OHOS lacks crtbeginS.o)
+--whole-archive libgfortran.a	Force link of all object files from libgfortran.a
+--allow-multiple-definition	Allow duplicate symbols (some objects inside libgfortran.a collide)
+--no-whole-archive	Link subsequent libraries normally
+-lm	Math library required by libgfortran
+--whole-archive libgcc.a	Force inclusion of GCC runtime helper functions
 
-**链接参数说明：**
-
-
-| 参数                            | 说明                                                              |
-| ------------------------------- | ----------------------------------------------------------------- |
-| `-shared -nostartfiles`         | 输出共享库，不使用 CRT 启动文件（OHOS sysroot 缺少`crtbeginS.o`） |
-| `--whole-archive libgfortran.a` | 强制链接 libgfortran.a 中的所有目标文件                           |
-| `--allow-multiple-definition`   | 允许重复符号（libgfortran.a 内部多个ç®标文件有同名符号）      |
-| `--no-whole-archive`            | 后续库按需链接                                                    |
-| `-lm`                           | libgfortran 需要数学库                                            |
-| `--whole-archive libgcc.a`      | 强制包含 GCC 运行时辅助函数                                       |
-
-### 7.2 执行
-
+7.2 Execution
 ```bash
-export LD_LIBRARY_PATH="~/.local/gfortran/lib64:~/.local/gfortran/lib/gcc/.../14.2.0"
+export LD_LIBRARY_PATH="$HOME/.local/gfortran/lib64:$HOME/.local/gfortran/lib/gcc/aarch64-unknown-linux-ohos/14.2.0"
 LD_PRELOAD=./hello.so /data/storage/el2/base/host
 ```
+Sequence:
 
-执行序列：
+    Dynamic loader loads hello.so (via LD_PRELOAD).
 
-1. 动态链接器加载 `hello.so`（通过 `LD_PRELOAD`）
-2. 运行 `host` 的 `main()`，立即 return 0
-3. 进程退出阶段，动态链接器调用 `.so` 的 destructor
-4. destructor 调用 `_gfortrani_init_units()` 初始化 Fortran I/O
-5. 调用 Fortran 程序的 `main(1, argv)`
-6. destructor 调用 `_gfortrani_flush_all_units()` 刷新输出
-7. 进程退出，stdout 数据刷出显示
+    host’s main() runs and returns immediately.
 
-## 八、完整使用示例
+    Process exit → dynamic loader calls destructor of hello.so.
 
-### 8.1 编译并运行 Fortran 程序
+    Destructor calls _gfortrani_init_units() → initialises Fortran I/O.
 
+    Calls Fortran main().
+
+    After Fortran main() returns, destructor calls _gfortrani_flush_all_units().
+
+    Process exits, stdout flushed.
+
+8. Complete usage example
+8.1 Using fortran-run (recommended)
 ```bash
-# 方式 1：使用 fortran-run 工具（推荐）
 cat > hello.f90 << 'EOF'
 program hello
   print *, "Hello, HarmonyOS!"
@@ -581,18 +445,16 @@ end program hello
 EOF
 
 fortran-run hello.f90
-# 输出：
+# Output:
 # Built: ./hello.so
 #  Hello, HarmonyOS!
 #  sin(1.0) =  0.84147098480789650
 ```
-
-### 8.2 手动分步操作
-
+8.2 Manual step‑by‑step
 ```bash
 export SYSROOT=/data/service/hnp/ohos-sdk.org/ohos-sdk_26.0.0.18/ohos/native/sysroot
 
-# 1. 编译 C 存根
+# 1. Compile C stub
 aarch64-unknown-linux-ohos-clang -c -fPIC -O2 \
     -o /data/storage/el2/base/.fortran_runner.o \
     -x c - << 'EOF'
@@ -615,10 +477,10 @@ static void run(void) {
 }
 EOF
 
-# 2. 编译 Fortran PIC 对象
+# 2. Compile Fortran PIC object
 gfortran -c -fPIC --sysroot="$SYSROOT" -o hello_pic.o hello.f90
 
-# 3. 链接共享库
+# 3. Link shared library
 aarch64-unknown-linux-ohos-clang -shared -nostartfiles \
     -o hello.so hello_pic.o /data/storage/el2/base/.fortran_runner.o \
     -Wl,--whole-archive -Wl,--allow-multiple-definition \
@@ -629,13 +491,11 @@ aarch64-unknown-linux-ohos-clang -shared -nostartfiles \
     -Wl,--no-whole-archive \
     --sysroot="$SYSROOT"
 
-# 4. 运行
+# 4. Run
 export LD_LIBRARY_PATH="$HOME/.local/gfortran/lib64:$HOME/.local/gfortran/lib/gcc/aarch64-unknown-linux-ohos/14.2.0"
 LD_PRELOAD=./hello.so /data/storage/el2/base/host
 ```
-
-### 8.3 环境变量速查
-
+8.3 Environment variables quick reference
 ```bash
 export GFORTRAN=/storage/Users/currentUser/.local/gfortran/bin/gfortran
 export CLANG=/data/service/hnp/bin/aarch64-unknown-linux-ohos-clang
@@ -646,141 +506,79 @@ export LIBGCC_A=/storage/Users/currentUser/.local/gfortran/lib/gcc/aarch64-unkno
 export LIBBACKTRACE_A=/storage/Users/currentUser/gfortran-harmonyos/build/libbacktrace/.libs/libbacktrace.a
 export LD_LIBRARY_PATH=/storage/Users/currentUser/.local/gfortran/lib64:/storage/Users/currentUser/.local/gfortran/lib/gcc/aarch64-unknown-linux-ohos/14.2.0
 ```
+9. Known issues and caveats
+Issue	Workaround / note
+Duplicate symbol: environ_test.o inside libgfortran.a	Add -Wl,--allow-multiple-definition to the linker command line.
+Missing _gfortrani_* internal symbols	Ensure libgfortran was built with internal symbols (check with nm).
+-nostartfiles required for shared library linking	OHOS sysroot lacks crtbeginS.o; destructor pattern does not need CRT init/fini.
+LLD alignment errors during GCC self‑link	These affect only cc1/xgcc; ignore if gfortran and libgfortran are built.
+libbacktrace not linked automatically	Manually add libbacktrace.a when linking the final .so.
+hmdfs permissions (group x required)	Use umask 022 before any build or file creation.
+Cannot run .so directly	.so is a library, not an executable – use LD_PRELOAD.
+Standard input (read *) not tested	Input inside destructor may not work; not part of the test suite.
+Only one Fortran .so can be loaded at a time	LD_PRELOAD only supports one library; run multiple programs sequentially.
+Build directory consumes ~30GB	Safe to delete build/ after make install.
+fortran-run produces .o and .so in source directory	They can be deleted; fortran-run will regenerate them.
 
-## 九、已知问题与注意事项
-
-### 9.1 duplicate symbol: `environ_test.o`
-
-libgfortran.a 中包含 `environ_test.o`、`environ.o` 和 `env.o`，其中 `environ_test.o` 包含与 `environ.o` 相同的全局符号。使用 `--whole-archive` 链接时会导致 duplicate symbol 错误。
-
-**解决方法**：链接时添加 `-Wl,--allow-multiple-definition`，LLD 会自动使用第一个定义。
-
-### 9.2 `_gfortrani_` 内部符号
-
-`_gfortrani_init_units` 和 `_gfortrani_flush_all_units` 是 libgfortran 的内部符号（由 GCC 内部 `internal_proto` 宏生成）。它们在 libgfortran 编译时导出为 `_gfortrani_` 前缀。这些符号在标准 gfortran 用法中不会被直接调用——它们由 gfortran 生成的初始化代码自动调用。本方案中由于没有 CRT 启动文件，需要手动调用。
-
-如果这些符号在链接时报错未定义，说明 libgfortran.a 编译时未导出 internal 符号。验证方法：
-
+11. Troubleshooting
+10.1 Link‑time undefined reference to _gfortrani_init_units
 ```bash
-nm ~/.local/gfortran/lib64/libgfortran.a | grep _gfortrani_init
-# 应显示 T 符号（text section 已定义）
-```
-
-### 9.3 `-nostartfiles` 的必要性
-
-OHOS sysroot 缺少 `crtbeginS.o`（Clang 的 crtbegin 实现路径与 GCC 不同）。链接共享库时必须使用 `-nostartfiles` 跳过 CRT 文件。由于 destructor 在进程退出时由动态链接器调用，不需要 CRT 中的 `_init`/`_fini` 函数。
-
-### 9.4 LLD 对齐错误（GCC 自链接阶段）
-
-在 GCC 自身构建中，`libbackend.a` 创建时使用了 `ar rcT`（thin archive），LLD 在处理 thin archive 时报告大量 R_AARCH64_LDST64_ABS_LO12_NC 对齐错误。这些错误仅影响 cc1/xgcc 的链接，不影响 libgfortran 或运行时的链接。
-
-如果按照 3.4 节的流程完成了构建和安装（f951 和 libgfortran 已安装），这些错误可以忽略。
-
-### 9.5 libbacktrace 链接
-
-libgfortran 依赖 libbacktrace（用于错误时的堆栈回溯）。构建系统中 libgfortran 的 `configure` 自动检测并链接了 `build/libbacktrace/libbacktrace.la`，因此最终 `libgfortran.a` 中的目标文件未包含 backtrace 符号。
-
-在链接最终 `.so` 时，必须额外链接 `libbacktrace.a`（位于 `build/libbacktrace/.libs/`），否则链接器报未定义符号 `backtrace_*`。
-
-### 9.6 hmdfs 权限问题
-
-hmdfs 要求目录有 group x 权限才能访问。GCC 构建过程中创建的临时目录和文件需要使用 `umask 022` 来确保 group 权限正确。
-
-### 9.7 无法直接运行 `.so`
-
-编译出的 `.so` 是共享库，不是可执行文件。不能通过 `./hello.so` 运行，只能通过 `LD_PRELOAD` 注入到 host 进程中。
-
-### 9.8 标准输入（`read *`）未测试
-
-由于 Fortran 代码在 destructor 阶段执行，此时 stdin 可能已被宿主进程关闭或重定向。`read *` 读取标准输入的功能未经过测试，可能在当前执行模式下不可用。
-
-### 9.9 每次只能加载一个 Fortran `.so`
-
-`LD_PRELOAD` 模式下，多个 Fortran 共享库的符号（如 `_gfortrani_*`、`MAIN__`）会冲突，无法同时加载两个 Fortran 程序。需要依次运行多个 `fortran-run` 调用。
-
-### 9.10 构建目录占用大量空间
-
-GCC 完整构建后，`build/` 目录约 30GB。如果磁盘空间紧张，可以在 `make install` 后安全删除：
-
-```bash
-rm -rf ~/gfortran-harmonyos/build
-```
-
-### 9.11 `fortran-run` 会在源码目录生成构建产物
-
-`fortran-run` 编译过程中会在 `.f90` 文件同目录下生成 `.o` 和 `.so` 文件。这些文件可以安全删除，重新运行 `fortran-run` 时会重新生成。
-
-## 十、故障排除
-
-### 10.1 链接阶段 undefined reference to `_gfortrani_init_units`
-
-```bash
-# 验证符号是否存在
 nm ~/.local/gfortran/lib64/libgfortran.a | grep init_units
-# 应输出类似：
-# 000000000000xxxx T _gfortrani_init_units
+# Expected output: 000... T _gfortrani_init_units
 ```
+If missing, rebuild libgfortran with internal symbols enabled.
+10.2 Runtime segmentation fault
 
-如果不存在，说明 libgfortran 编译时未启用内部符号导出。需要重新编译 libgfortran，或在 configure 时确认 `--enable-maintainer-mode` 或相关标志。
+Possible causes:
 
-### 10.2 运行时 segment fault
+    Fortran I/O system state already destroyed when destructor runs.
 
-如果 destructor 中的 `_gfortrani_init_units()` 崩溃，可能是因为：
+    Try using a constructor instead (older versions of fortran_runner.c used __attribute__((constructor))).
 
-- Fortran I/O 系统需要某些运行时的全局状态，在进程退出阶段已不可用
-- 尝试将 destructor 改为 constructor（早前版本的 `fortran_runner.c` 使用 constructor）
-- 检查 opts[] 参数是否合适
+    Check that opts[] values are appropriate.
 
-### 10.3 无输出
+10.3 No output
 
-如果 Fortran 程序运行但无输出：
+    Ensure _gfortrani_flush_all_units() is called (Fortran I/O is buffered).
 
-- 确认调用了 `_gfortrani_flush_all_units()`（Fortran I/O 默认缓冲输出）
-- 检查 stdout 是否被重定向
-- 尝试设置 `setvbuf(stdout, NULL, _IONBF, 0)`（存根中已包含）
+    Check if stdout is redirected.
 
-### 10.4 gfortran 编译报错找不到 `_gfortran_*` 符号
+    Add setvbuf(stdout, NULL, _IONBF, 0); to the stub.
 
-在编译 Fortran 代码为 `.o` 时，gfortran 会插入对 libgfortran 符号的引用。这些符号在链接阶段解析。如果编译 `.o` 时报错（不是链接时），说明 gfortran 的 specs 配置有问题。
+10.4 gfortran cannot find _gfortran_* symbols when compiling .o
 
-验证 specs：
-
+This indicates a problem with gfortran’s specs. Verify:
 ```bash
 gfortran -dumpspecs | head -20
 ```
+Appendix A – File manifest
+File	Source	Purpose
+~/.local/gfortran/bin/gfortran	GCC make install	Fortran compiler driver
+~/.local/gfortran/lib64/libgfortran.a	GCC make install	Runtime static library (linking)
+~/.local/gfortran/lib64/libgfortran.so.5	GCC make install	Runtime dynamic library (loaded at runtime)
+~/.local/gfortran/lib/gcc/aarch64-unknown-linux-ohos/14.2.0/f951	GCC make install	Fortran compiler backend
+~/.local/gfortran/lib/gcc/aarch64-unknown-linux-ohos/14.2.0/libgcc.a	GCC make install	GCC runtime helper functions
+~/gfortran-harmonyos/build/libbacktrace/.libs/libbacktrace.a	GCC build artifact	Stack trace library
+~/.local/gfortran/lib/gcc/aarch64-unknown-linux-ohos/14.2.0/Scrt1.o	Manual copy	musl CRT entry file
+~/.local/gfortran/lib/gcc/aarch64-unknown-linux-ohos/14.2.0/crtbegin.o	Manual copy	Clang compiler‑rt CRT initialization
+/data/storage/el2/base/host	Manual compilation	LD_PRELOAD host process
+/data/storage/el2/base/.fortran_runner.c	Generated by script	C runtime stub (destructor)
+/data/service/hnp/ohos-sdk.org/ohos-sdk_26.0.0.18/ohos/native/sysroot	SDK pre‑installed	musl sysroot
+/data/service/hnp/bin/aarch64-unknown-linux-ohos-clang	SDK pre‑installed	Clang compiler wrapper
 
-## 附录 A：文件清单
-
-
-| 文件                                                                    | 来源             | 用途                                |
-| ----------------------------------------------------------------------- | ---------------- | ----------------------------------- |
-| `~/.local/gfortran/bin/gfortran`                                        | GCC make install | Fortran 编译器驱动                  |
-| `~/.local/gfortran/lib64/libgfortran.a`                                 | GCC make install | 运行时静态库（链接用）              |
-| `~/.local/gfortran/lib64/libgfortran.so.5`                              | GCC make install | 运行时动态库（gfortran 运行时加载） |
-| `~/.local/gfortran/lib/gcc/.../f951`                                    | GCC make install | Fortran 编译后端                    |
-| `~/.local/gfortran/lib/gcc/.../libgcc.a`                                | GCC make install | GCC 运行时辅助函数                  |
-| `~/gfortran-harmonyos/build/libbacktrace/.libs/libbacktrace.a`          | GCC 构建产物     | 堆栈回溯库                          |
-| `~/.local/gfortran/lib/gcc/.../14.2.0/Scrt1.o`                         | 手动复制         | musl CRT 入口文件                   |
-| `~/.local/gfortran/lib/gcc/.../14.2.0/crtbegin.o`                      | 手动复制         | Clang compiler-rt CRT 初始化        |
-| `/data/storage/el2/base/host`                                           | 手动编译         | LD_PRELOAD 宿主进程                 |
-| `/data/storage/el2/base/.fortran_runner.c`                              | fortran-run 生成 | C 运行时存根（destructor）          |
-| `/data/service/hnp/ohos-sdk.org/ohos-sdk_26.0.0.18/ohos/native/sysroot` | SDK 预装         | musl sysroot                        |
-| `/data/service/hnp/bin/aarch64-unknown-linux-ohos-clang`                | SDK 预装         | Clang 编译器包装器                  |
-
-## 附录 B：构建命令速查
-
+Appendix B – Build command quick reference
 ```bash
-# 完整构建（从零开始）
+# Full build from scratch
 cd ~/gfortran-harmonyos
-./download.sh              # 下载 GCC 14.2.0 源码
-./configure.sh             # 配置
-cd build && make -j$(nproc) # 编译（可能需要重试多次）
-make install prefix=~/.local/gfortran  # 安装
+./download.sh
+./configure.sh
+cd build && make -j$(nproc)          # may need several retries
+make install prefix=~/.local/gfortran
 
-# 编译 host
+# Compile host
 aarch64-unknown-linux-ohos-clang -o /data/storage/el2/base/host /data/storage/el2/base/host.c
 
-# 复制 CRT 文件（使 gfortran 可直接编译独立可执行文件）
+# Copy CRT files
 SYSROOT=/data/service/hnp/ohos-sdk.org/ohos-sdk_26.0.0.18/ohos/native/sysroot
 CLANGRT=$SYSROOT/../../llvm/lib/clang/15.0.4/lib/aarch64-linux-ohos
 GFORTRAN_LIB=~/.local/gfortran/lib/gcc/aarch64-unknown-linux-ohos/14.2.0
@@ -790,46 +588,46 @@ cp $SYSROOT/usr/lib/aarch64-linux-ohos/crtn.o  $GFORTRAN_LIB/
 cp $CLANGRT/clang_rt.crtbegin.o $GFORTRAN_LIB/crtbegin.o
 cp $CLANGRT/clang_rt.crtend.o   $GFORTRAN_LIB/crtend.o
 
-# 安装 fortran-run
+# Install fortran-run
 cp ~/gfortran-harmonyos/fortran-run ~/.local/bin/fortran-run
 chmod +x ~/.local/bin/fortran-run
 
-# 设置环境
+# Setup environment
 export PATH="$PATH:$HOME/.local/gfortran/bin:$HOME/.local/bin"
 export LD_LIBRARY_PATH="$HOME/.local/gfortran/lib64:$HOME/.local/gfortran/lib/gcc/aarch64-unknown-linux-ohos/14.2.0"
 
-# 使用
+# Use
 fortran-run hello.f90
 ```
+Appendix C – Functional test report
 
-## 附录 C：功能测试报告
+Test date: 2026‑05‑01
+Compiler: GCC 14.2.0 gfortran on aarch64-unknown-linux-ohos
 
-测试日期：2026-05-01，编译器：GCC 14.2.0 gfortran on aarch64-unknown-linux-ohos
+#	Test item	Result	Notes
+1	Basic I/O	✅	print *, write(*,*) stdout normal
+2	Mathematical built‑ins	✅	sin, cos, sqrt, exp, log, atan, abs, mod, max, min, floor, ceiling, nint, aint
+3	File I/O	✅	open(r/w), close, iostat, error handling
+4	Array operations	✅	constructors, slice, sum, minval, maxval, reshape
+5	Character/string handling	✅	trim, len, len_trim, index, char, ichar, concatenation
+6	Derived types & iso_c_binding	✅	type, bind(C), C_INT/C_DOUBLE/C_FLOAT
+7	Format statements	✅	I0, F8.4, I5.3, implicit DO
+8	Random numbers	✅	random_seed(size/put), random_number
+9	Complex I/O	✅	internal file write, advance='no' non‑advancing I/O
+10	Dynamic memory	✅	allocatable arrays, allocate/deallocate, 100×100 arrays
+11	Functions & subroutines	✅	interface block, contains, intent(in)
+12	Modules	✅	module/use, cross‑unit calls
+13	Where / Pack / Merge	✅	where‑elsewhere, pack, merge array operations
+14	Command‑line arguments	✅	command_argument_count, get_command_argument(0) program name
 
-| # | 测试项 | 结果 | 说明 |
-|---|--------|------|------|
-| 1 | 基本 I/O | ✅ | `print *`, `write(*,*)` 标准输出正常 |
-| 2 | 数学内建函数 | ✅ | sin, cos, sqrt, exp, log, atan, abs, mod, max, min, floor, ceiling, nint, aint |
-| 3 | 文件 I/O | ✅ | open(read/write), close, iostat 错误处理 |
-| 4 | 数组操作 | ✅ | 数组构造器、slice、sum、minval、maxval、reshape |
-| 5 | 字符/字符串 | ✅ | trim, len, len_trim, index, char, ichar, 连接 |
-| 6 | 派生类型 & iso_c_binding | ✅ | type, bind(C), C_INT/C_DOUBLE/C_FLOAT |
-| 7 | Format 语句 | ✅ | 格式描述符 I0, F8.4, I5.3, 隐含 DO |
-| 8 | 随机数 | ✅ | random_seed(size/put), random_number |
-| 9 | 复杂 I/O | ✅ | 内部文件写入, advance='no' 非推进 I/O |
-| 10 | 动态内存 | ✅ | allocatable 数组, allocate/deallocate, 100×100 数组 |
-| 11 | 函数与子程序 | ✅ | interface block, contains, intent(in) |
-| 12 | 模块 | ✅ | module/use, 跨单元调用 |
-| 13 | Where/Pack/Merge | ✅ | where-elsewhere, pack, merge 数组操作 |
-| 14 | 命令行参数 | ✅ | command_argument_count, get_command_argument(0) 程序名 |
+Conclusion: gfortran on HarmonyOS is fully functional. All core Fortran features work correctly, suitable for integration with R via dlopen().
 
-### 测试结论
+Remaining limitations:
 
-gfortran 在 HarmonyOS 上功能完整，所有核心 Fortran 特性正常工作。可直接用于 R 语言集成（通过 `dlopen` 加载共享库）。
+    OpenMP disabled (--disable-gomp)
 
-### 已知限制
+    Coarrays not tested (libcaf_single.a present but not used)
 
-- OpenMP 未启用（configure 时 `--disable-gomp`）
-- Coarrays 未启用（libcaf_single.a 已安装但未测试）
-- `execute_command_line` / `system` 因 hmmac 限制不可用
-- 标准输入（`read *`）在 destructor 执行模式下未测试
+    execute_command_line / system blocked by hmmac
+
+    Standard input (read *) not tested under destructor execution mode
