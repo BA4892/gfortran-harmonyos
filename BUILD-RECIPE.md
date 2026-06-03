@@ -15,13 +15,13 @@ ohos-sdk_26.0.0.18 (API 26)
 
 SDK installation path:
 /data/service/hnp/ohos-sdk.org/ohos-sdk_26.0.0.18/ohos/native/
-├── llvm/bin/ # Clang toolchain
-│ ├── clang
-│ └── ...
-├── sysroot/ # musl headers & libraries
-│ ├── usr/include/
-│ └── usr/lib/
-└── build-tools/ # cmake, ninja, etc.
+├── llvm/bin/               # Clang toolchain
+│   ├── clang
+│   └── ...
+├── sysroot/                # musl headers & libraries
+│   ├── usr/include/
+│   └── usr/lib/
+└── build-tools/            # cmake, ninja, etc.
 
 > **Note:** In this environment `hnp` commands are not directly callable – the SDK is pre‑installed.
 
