@@ -3,27 +3,27 @@
 Build gfortran (Fortran compiler) for HarmonyOS (OpenHarmony) using the system's
 OHOS Clang 15.0.4 as the host compiler.
 
-Fortran 代码可编译为 `.so` 共享库，通过 `LD_PRELOAD` + destructor 模式执行，
-或通过 `dlopen` 在 R/Python 等宿主进程中调用。
+Fortran code can be compiled into a `.so` shared library and executed using the `LD_PRELOAD` + destructor pattern,
+or called from host processes such as R or Python via `dlopen`.
 
 ## How it works
 
-HarmonyOS 的 `hmmac` 内核级安全策略阻止执行用户创建的可执行文件（execve 返回 126），
-因此传统 `gfortran -o hello && ./hello` 流程不可用。
+HarmonyOS's `hmmac` kernel-level security policy prevents the execution of user-created executable files (execve returns 126),
+so the traditional `gfortran -o hello && ./hello` workflow is not available.
 
-本项目的解决方式是将 Fortran 代码编译为共享库（.so），通过 LD_PRELOAD 注入到
-系统可执行的宿主进程（/data/storage/el2/base/host）中，在 destructor 阶段执行
-Fortran 代码。详情见 [BUILD-RECIPE.md](BUILD-RECIPE.md) 第六章。
+The solution for this project involves compiling the Fortran code into a shared library (.so) and injecting it via LD_PRELOAD into
+the system’s executable host process (/data/storage/el2/base/host), where the Fortran code is executed
+during the destructor phase. For details, see Chapter 6 of [BUILD-RECIPE.md](BUILD-RECIPE.md).
 
 ## Quick Start
 
 ```bash
-# 编译并运行 Fortran 程序
+# Compile and run a Fortran program
 fortran-run hello.f90
 
-# 也支持编译独立可执行文件（需先配置 CRT）
-gfortran -o hello hello.f90      # 编译成功
-# ./hello                         # hmmac 会拦截执行
+# Also supports compiling standalone executables (requires prior CRT configuration)
+gfortran -o hello hello.f90      # Compilation successful
+# ./hello                         # hmmac will intercept execution
 ```
 
 ## Requirements
@@ -92,8 +92,8 @@ fortran-run hello.f90
 fortran-run hello.f90 arg1 arg2  # 支持命令行参数
 ```
 
-支持传递任意命令行参数到 Fortran 程序的 `get_command_argument()` 和
-`command_argument_count()` 内置函数。参数中的空格、特殊字符会自动转义。
+Supports the built-in functions `get_command_argument()` and
+`command_argument_count()` for passing arbitrary command-line arguments to Fortran programs. Spaces and special characters in the arguments are automatically escaped.
 
 ### Compile shared library for R/Python integration
 ```bash
